@@ -22,6 +22,8 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
+    # So `vars.VITE_API_BASE_URL` resolves from the same GitHub Environment where you saved it.
+    environment: github-pages
     defaults:
       run:
         working-directory: smart-parking
@@ -37,9 +39,19 @@ jobs:
       - name: Install
         run: npm install --legacy-peer-deps --no-audit --no-fund
 
+      - name: Validate API base URL
+        env:
+          VITE_API_BASE_URL: ${{ vars.VITE_API_BASE_URL }}
+        run: |
+          if [ -z "$VITE_API_BASE_URL" ]; then
+            echo "VITE_API_BASE_URL is missing. Add it under Settings → Environments → github-pages → Variables, or as a Repository variable."
+            exit 1
+          fi
+
       - name: Build
         env:
           VITE_BASE_PATH: ${{ github.event.repository.name }}
+          VITE_API_BASE_URL: ${{ vars.VITE_API_BASE_URL }}
         run: npm run build
 
       - name: Setup Pages
