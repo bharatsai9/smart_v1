@@ -4,14 +4,16 @@ import tailwindcss from "@tailwindcss/vite";
 import path from "path";
 
 const port = Number(process.env.PORT || "5173");
-const isProduction = process.env.NODE_ENV === "production";
+// GitHub Pages project sites live at /repo-name/. Set VITE_BASE_PATH=repo-name in CI.
+// Do NOT gate this on NODE_ENV — if NODE_ENV is unset when this file loads, base was "/" and
+// deployed HTML pointed at /assets/... (404) instead of /smart_v1/assets/... (blank page).
 const configuredBasePath = (process.env.VITE_BASE_PATH || "").trim();
-const normalizedBasePath = configuredBasePath
+const base = configuredBasePath
   ? `/${configuredBasePath.replace(/^\/+|\/+$/g, "")}/`
   : "/";
 
 export default defineConfig({
-  base: isProduction ? normalizedBasePath : "/",
+  base,
   plugins: [react(), tailwindcss()],
   resolve: {
     alias: {
