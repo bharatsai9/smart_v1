@@ -80,7 +80,7 @@ function SlotCard({ slot }: { slot: ParkingSlot }) {
 export function Levels() {
   const [activeLevel, setActiveLevel] = useState<Level>("GF");
 
-  const { data: slots, isLoading } = useGetSlots(
+  const { data: slots, isLoading, isError, error } = useGetSlots(
     { level: activeLevel },
     { query: { queryKey: getGetSlotsQueryKey({ level: activeLevel }) } },
   );
@@ -171,21 +171,37 @@ export function Levels() {
       </div>
 
       {/* Slot Grid */}
-      {isLoading ? (
+      {isError && (
+        <div className="rounded-xl border border-destructive/40 bg-destructive/5 p-4 text-sm text-destructive">
+          <p className="font-medium">Could not load slots from the API.</p>
+          <p className="mt-1 text-destructive/90">
+            {error instanceof Error ? error.message : "Request failed"}
+          </p>
+          <p className="mt-2 text-slate-600 text-xs">
+            Start the backend (e.g. <code className="rounded bg-white px-1">api-server</code> on port{" "}
+            <code className="rounded bg-white px-1">8080</code>) or set{" "}
+            <code className="rounded bg-white px-1">VITE_API_BASE_URL</code> in{" "}
+            <code className="rounded bg-white px-1">.env.local</code>. This app does not use SQL; slots
+            come from the API process memory.
+          </p>
+        </div>
+      )}
+
+      {!isError && isLoading ? (
         <div className="grid grid-cols-5 sm:grid-cols-8 md:grid-cols-10 gap-2">
-          {Array.from({ length: 50 }).map((_, i) => (
+          {Array.from({ length: 34 }).map((_, i) => (
             <Skeleton key={i} className="h-14 rounded-xl" />
           ))}
         </div>
-      ) : (
+      ) : !isError ? (
         <div className="grid grid-cols-5 sm:grid-cols-8 md:grid-cols-10 gap-2">
           {safeSlots.map((slot) => (
             <SlotCard key={slot.slotId} slot={slot} />
           ))}
         </div>
-      )}
+      ) : null}
 
-      {!isLoading && safeSlots.length === 0 && (
+      {!isLoading && !isError && safeSlots.length === 0 && (
         <p className="text-sm text-slate-500">
           No slots available for this level
         </p>

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { Link, useLocation } from "wouter";
 import {
   LayoutDashboard,
@@ -10,17 +10,13 @@ import {
   Menu,
   X,
   ChevronRight,
+  LogOut,
+  Shield,
+  User,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-
-const navItems = [
-  { href: "/", label: "Dashboard", icon: LayoutDashboard },
-  { href: "/book", label: "Book Slot", icon: ParkingSquare },
-  { href: "/levels", label: "Level Map", icon: Layers },
-  { href: "/my-car", label: "Find My Car", icon: Car },
-  { href: "/history", label: "Booking History", icon: History },
-  { href: "/payments", label: "Payments", icon: CreditCard },
-];
+import { useAuth } from "@/lib/auth-context";
+import { Button } from "@/components/ui/button";
 
 function SidebarLink({ item, location, onClick }: { item: typeof navItems[0]; location: string; onClick?: () => void }) {
   const isActive = location === item.href;
@@ -45,6 +41,27 @@ function SidebarLink({ item, location, onClick }: { item: typeof navItems[0]; lo
 export function Layout({ children }: { children: React.ReactNode }) {
   const [location] = useLocation();
   const [mobileOpen, setMobileOpen] = useState(false);
+  const { user, logout } = useAuth();
+
+  const navItems = useMemo(
+    () => [
+      {
+        href: "/",
+        label: user?.role === "admin" ? "Operations" : "My parking",
+        icon: LayoutDashboard,
+      },
+      { href: "/book", label: "Book slot", icon: ParkingSquare },
+      { href: "/levels", label: "Level map", icon: Layers },
+      { href: "/my-car", label: "Find my car", icon: Car },
+      {
+        href: "/history",
+        label: user?.role === "admin" ? "All bookings" : "My bookings",
+        icon: History,
+      },
+      { href: "/payments", label: "Payments", icon: CreditCard },
+    ],
+    [user?.role],
+  );
 
   const currentPage = navItems.find((n) => n.href === location)?.label ?? "Parking System";
 
@@ -70,9 +87,30 @@ export function Layout({ children }: { children: React.ReactNode }) {
           ))}
         </nav>
 
-        <div className="px-5 py-4 border-t border-white/10">
+        <div className="px-5 py-4 border-t border-white/10 space-y-3">
+          {user && (
+            <div className="flex items-center gap-2 text-xs text-slate-300">
+              {user.role === "admin" ? (
+                <Shield className="h-3.5 w-3.5 text-amber-400 shrink-0" />
+              ) : (
+                <User className="h-3.5 w-3.5 text-slate-400 shrink-0" />
+              )}
+              <span className="truncate font-mono">{user.username}</span>
+              <span className="text-slate-500">·</span>
+              <span className="text-slate-400 capitalize">{user.role}</span>
+            </div>
+          )}
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="w-full justify-start text-slate-400 hover:text-white hover:bg-white/10"
+            onClick={() => logout()}
+          >
+            <LogOut className="h-4 w-4 mr-2" />
+            Sign out
+          </Button>
           <div className="text-xs text-slate-500">College Campus Parking</div>
-          <div className="text-xs text-slate-600 mt-0.5">v2.0 — Production</div>
         </div>
       </aside>
 
@@ -104,6 +142,26 @@ export function Layout({ children }: { children: React.ReactNode }) {
             <SidebarLink key={item.href} item={item} location={location} onClick={() => setMobileOpen(false)} />
           ))}
         </nav>
+        <div className="px-4 py-3 border-t border-white/10 md:hidden">
+          {user && (
+            <div className="text-xs text-slate-400 mb-2 font-mono">
+              {user.username} · {user.role}
+            </div>
+          )}
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="w-full justify-start text-slate-400"
+            onClick={() => {
+              logout();
+              setMobileOpen(false);
+            }}
+          >
+            <LogOut className="h-4 w-4 mr-2" />
+            Sign out
+          </Button>
+        </div>
       </aside>
 
       {/* Main content */}

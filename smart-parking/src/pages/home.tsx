@@ -1,5 +1,6 @@
 import { Link } from "wouter";
-import { useGetDashboard } from "@/lib/api-client";
+import { useGetDashboard, useGetSessions, getGetSessionsQueryKey } from "@/lib/api-client";
+import { useAuth } from "@/lib/auth-context";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
@@ -52,17 +53,36 @@ function StatCard({
   return href ? <Link href={href}>{inner}</Link> : inner;
 }
 
+type SessionRow = { paymentStatus: string; sessionId: number };
+
 export function Home() {
-  const { data: dashboard, isLoading } = useGetDashboard();
+  const { user } = useAuth();
+  const isAdmin = user?.role === "admin";
+  const { data: dashboard, isLoading } = useGetDashboard({
+    query: { enabled: isAdmin },
+  });
+
+  const { data: mySessions, isLoading: loadingMySessions } = useGetSessions(
+    {},
+    { query: { enabled: !isAdmin, queryKey: getGetSessionsQueryKey({}) } },
+  );
+
+  const mine = (mySessions as SessionRow[] | undefined) ?? [];
+  const myActive = mine.filter((s) => s.paymentStatus === "pending" || s.paymentStatus === "parked").length;
+  const myCompleted = mine.filter((s) => s.paymentStatus === "completed").length;
 
   return (
     <div className="space-y-8">
       {/* Hero */}
       <div className="flex items-start justify-between">
         <div>
-          <h2 className="text-2xl font-bold text-slate-900">Overview</h2>
+          <h2 className="text-2xl font-bold text-slate-900">
+            {isAdmin ? "Operations overview" : "My parking"}
+          </h2>
           <p className="text-sm text-slate-500 mt-1">
-            Real-time parking status across all levels
+            {isAdmin
+              ? "Real-time status across all levels (admin)"
+              : "Your bookings only — other drivers cannot see your sessions."}
           </p>
         </div>
         <div className="flex gap-3">
@@ -83,9 +103,51 @@ export function Home() {
         </div>
       </div>
 
-      {/* Stat Cards */}
+      {!isAdmin && (
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+          <Card className="border-indigo-200 bg-indigo-50/50 shadow-sm">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm font-medium text-slate-600">Signed in</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <p className="font-mono font-semibold text-lg text-slate-900">{user?.username}</p>
+              <p className="text-xs text-slate-500 mt-1">Bookings are tied to this account.</p>
+            </CardContent>
+          </Card>
+          <Card className="border-slate-200 shadow-sm">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm font-medium text-slate-600">Active bookings</CardTitle>
+            </CardHeader>
+            <CardContent>
+              {loadingMySessions ? (
+                <Skeleton className="h-9 w-12" />
+              ) : (
+                <p className="text-3xl font-bold text-slate-900">{myActive}</p>
+              )}
+              <p className="text-xs text-slate-500 mt-1">Reserved or parked</p>
+            </CardContent>
+          </Card>
+          <Card className="border-slate-200 shadow-sm">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm font-medium text-slate-600">Completed</CardTitle>
+            </CardHeader>
+            <CardContent>
+              {loadingMySessions ? (
+                <Skeleton className="h-9 w-12" />
+              ) : (
+                <p className="text-3xl font-bold text-slate-900">{myCompleted}</p>
+              )}
+              <Link href="/history" className="text-xs text-indigo-600 hover:underline mt-1 inline-block">
+                View my bookings →
+              </Link>
+            </CardContent>
+          </Card>
+        </div>
+      )}
+
+      {/* Stat Cards — admin only */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        {isLoading ? (
+        {!isAdmin ? null : isLoading ? (
           Array.from({ length: 7 }).map((_, i) => (
             <Card key={i} className="border-slate-200 shadow-sm">
               <CardHeader className="pb-2">
@@ -161,7 +223,7 @@ export function Home() {
       </div>
 
       {/* Level Breakdown */}
-      {dashboard && (
+      {isAdmin && dashboard && (
         <Card className="border-slate-200 shadow-sm">
           <CardHeader className="flex flex-row items-center gap-2">
             <Layers className="h-5 w-5 text-slate-500" />

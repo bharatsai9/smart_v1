@@ -1,3 +1,8 @@
+# Render Blueprint: https://render.com/docs/blueprint-spec
+# SQLite (sql.js) file DB: on Free tier the filesystem is ephemeral — data is lost on redeploy.
+# For durable storage: upgrade the service and attach a disk (see Render docs: Persistent Disks),
+# then set DATABASE_PATH to a path under the disk mount (e.g. /opt/data/parking.db).
+
 services:
   - type: web
     name: smart-parking-api
@@ -9,9 +14,12 @@ services:
     envVars:
       - key: NODE_ENV
         value: production
-      - key: NPM_CONFIG_PRODUCTION
-        value: "false"
-      - key: PORT
-        value: 10000
       - key: CORS_ORIGIN
+        sync: false
+      # Required in production (do not use the default in jwt.ts)
+      - key: JWT_SECRET
+        generateValue: true
+      # Optional: absolute path to parking.db. Default is ./data/parking.db under api-server cwd.
+      # With a paid instance + persistent disk, set e.g. /opt/data/parking.db and mount disk at /opt/data.
+      - key: DATABASE_PATH
         sync: false

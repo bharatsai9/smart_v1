@@ -1,17 +1,18 @@
 import { Router, type IRouter } from "express";
-import { parkingSlots } from "../lib/store";
+import { getAllSlots } from "../lib/store";
 import { getSlotsQuerySchema } from "../lib/schemas";
+import { requireAuth, requireRole } from "../middleware/auth";
 
 const router: IRouter = Router();
 
-router.get("/slots", async (req, res): Promise<void> => {
+router.get("/slots", requireAuth, requireRole("admin", "user"), async (req, res): Promise<void> => {
   const query = getSlotsQuerySchema.safeParse(req.query);
   if (!query.success) {
     res.status(400).json({ error: query.error.message });
     return;
   }
 
-  let slots = [...parkingSlots];
+  let slots = [...getAllSlots()];
 
   if (query.data.level) {
     slots = slots.filter((s) => s.level === query.data.level);

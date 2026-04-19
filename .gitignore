@@ -4,3 +4,7 @@ dist/
 **/dist/
 .DS_Store
 *.log
+api-server/data/
+*.db
+*.db-shm
+*.db-wal

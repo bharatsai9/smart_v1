@@ -1,7 +1,15 @@
 import { Router, type IRouter } from "express";
-import { parkingSessions, parkingSlots, allocateSessionId } from "../lib/store";
+import {
+  findSessionById,
+  getAllSessions,
+  getSlotById,
+  insertSession,
+  setSlotAvailable,
+  updateSessionFull,
+} from "../lib/store";
 import { bookSlotBodySchema, getMyCarQuerySchema, getSessionsQuerySchema, sessionIdParamSchema } from "../lib/schemas";
 import type { ParkingSession } from "../lib/types";
+import { requireAuth, requireRole } from "../middleware/auth";
 
 const router: IRouter = Router();
 
@@ -33,7 +41,7 @@ function calculateFeeInr(parkingStartTime: Date | null, pricePerHour: number): n
 
 /** Enrich session with slot data */
 function enrichSession(session: ParkingSession) {
-  const slot = parkingSlots.find((item) => item.slotId === session.slotId) ?? null;
+  const slot = getSlotById(session.slotId) ?? null;
 
   let durationMinutes: number | null = null;
   if (session.parkingStartTime) {
@@ -44,21 +52,28 @@ function enrichSession(session: ParkingSession) {
   return { ...session, slot, durationMinutes };
 }
 
-// GET /sessions
-router.get("/sessions", async (req, res): Promise<void> => {
+// GET /sessions — admin: full list + query filters; user: only own sessions (by JWT username ↔ userId)
+router.get("/sessions", requireAuth, requireRole("admin", "user"), async (req, res): Promise<void> => {
   const query = getSessionsQuerySchema.safeParse(req.query);
   if (!query.success) {
     res.status(400).json({ error: query.error.message });
     return;
   }
 
-  let sessions = [...parkingSessions];
+  let sessions = [...getAllSessions()];
 
-  if (query.data.userId) {
-    sessions = sessions.filter((s) => s.userId === query.data.userId);
-  }
-  if (query.data.status) {
-    sessions = sessions.filter((s) => s.paymentStatus === query.data.status);
+  if (req.auth!.role === "user") {
+    sessions = sessions.filter((s) => s.userId === req.auth!.username);
+    if (query.data.status) {
+      sessions = sessions.filter((s) => s.paymentStatus === query.data.status);
+    }
+  } else {
+    if (query.data.userId) {
+      sessions = sessions.filter((s) => s.userId === query.data.userId);
+    }
+    if (query.data.status) {
+      sessions = sessions.filter((s) => s.paymentStatus === query.data.status);
+    }
   }
 
   const enriched = sessions.map(enrichSession);
@@ -66,32 +81,40 @@ router.get("/sessions", async (req, res): Promise<void> => {
 });
 
 // POST /book — book a slot (reservation, does NOT start billing)
-router.post("/book", async (req, res): Promise<void> => {
+router.post("/book", requireAuth, requireRole("admin", "user"), async (req, res): Promise<void> => {
   const parsed = bookSlotBodySchema.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: parsed.error.message });
     return;
   }
 
-  const { userId, carNumber, slotId } = parsed.data;
+  const { carNumber, slotId } = parsed.data;
+  const userId = req.auth!.username;
 
-  const slot = parkingSlots.find((item) => item.slotId === slotId);
+  const slot = getSlotById(slotId);
 
   if (!slot) {
-    res.status(404).json({ error: "Slot not found" });
+    res.status(404).json({
+      error: `No slot exists with id "${slotId}". Check the slot id and try again.`,
+      code: "SLOT_NOT_FOUND",
+      slotId,
+    });
     return;
   }
   if (!slot.available) {
-    res.status(409).json({ error: "Slot is already occupied" });
+    res.status(409).json({
+      error:
+        "This slot is no longer available — it may already be booked or occupied. Refresh recommendations and choose another slot.",
+      code: "SLOT_UNAVAILABLE",
+      slotId,
+    });
     return;
   }
 
   const routeSteps = generateRouteSteps(slot.level, slotId);
 
-  // Mark slot as occupied
-  slot.available = false;
+  setSlotAvailable(slotId, false);
 
-  // Generate a booking QR immediately (without fee — fee added at exit)
   const tempQrData = JSON.stringify({
     type: "booking",
     carNumber,
@@ -100,8 +123,7 @@ router.post("/book", async (req, res): Promise<void> => {
     ts: Date.now(),
   });
 
-  const session: ParkingSession = {
-    sessionId: allocateSessionId(),
+  const session = insertSession({
     userId,
     carNumber,
     slotId,
@@ -112,13 +134,12 @@ router.post("/book", async (req, res): Promise<void> => {
     paymentStatus: "pending",
     routeSteps,
     qrData: tempQrData,
-  };
-  parkingSessions.push(session);
+  });
   res.status(201).json(enrichSession(session));
 });
 
 // POST /sessions/:sessionId/start — start actual parking (billing begins)
-router.post("/sessions/:sessionId/start", async (req, res): Promise<void> => {
+router.post("/sessions/:sessionId/start", requireAuth, requireRole("admin", "user"), async (req, res): Promise<void> => {
   const raw = Array.isArray(req.params.sessionId) ? req.params.sessionId[0] : req.params.sessionId;
   const params = sessionIdParamSchema.safeParse({ sessionId: raw });
   if (!params.success) {
@@ -126,25 +147,29 @@ router.post("/sessions/:sessionId/start", async (req, res): Promise<void> => {
     return;
   }
 
-  const session = parkingSessions.find((item) => item.sessionId === params.data.sessionId);
+  const session = findSessionById(params.data.sessionId);
 
   if (!session) {
     res.status(404).json({ error: "Session not found" });
     return;
   }
 
-  const slot = parkingSlots.find((item) => item.slotId === session.slotId);
+  const slot = getSlotById(session.slotId);
 
   const qrData = generateQrData(session.sessionId, session.carNumber, session.slotId, slot?.pricePerHour ?? 0);
 
-  session.parkingStartTime = new Date().toISOString();
-  session.paymentStatus = "parked";
-  session.qrData = qrData;
-  res.json(enrichSession(session));
+  const updated: ParkingSession = {
+    ...session,
+    parkingStartTime: new Date().toISOString(),
+    paymentStatus: "parked",
+    qrData,
+  };
+  updateSessionFull(updated);
+  res.json(enrichSession(updated));
 });
 
 // GET /sessions/:sessionId/fee — current fee in INR
-router.get("/sessions/:sessionId/fee", async (req, res): Promise<void> => {
+router.get("/sessions/:sessionId/fee", requireAuth, requireRole("admin", "user"), async (req, res): Promise<void> => {
   const raw = Array.isArray(req.params.sessionId) ? req.params.sessionId[0] : req.params.sessionId;
   const params = sessionIdParamSchema.safeParse({ sessionId: raw });
   if (!params.success) {
@@ -152,14 +177,14 @@ router.get("/sessions/:sessionId/fee", async (req, res): Promise<void> => {
     return;
   }
 
-  const session = parkingSessions.find((item) => item.sessionId === params.data.sessionId);
+  const session = findSessionById(params.data.sessionId);
 
   if (!session) {
     res.status(404).json({ error: "Session not found" });
     return;
   }
 
-  const slot = parkingSlots.find((item) => item.slotId === session.slotId);
+  const slot = getSlotById(session.slotId);
 
   const pricePerHour = slot?.pricePerHour ?? 0;
   const startTime = session.parkingStartTime ? new Date(session.parkingStartTime) : null;
@@ -185,7 +210,7 @@ router.get("/sessions/:sessionId/fee", async (req, res): Promise<void> => {
 });
 
 // POST /sessions/:sessionId/exit — finalize and mark paid
-router.post("/sessions/:sessionId/exit", async (req, res): Promise<void> => {
+router.post("/sessions/:sessionId/exit", requireAuth, requireRole("admin", "user"), async (req, res): Promise<void> => {
   const raw = Array.isArray(req.params.sessionId) ? req.params.sessionId[0] : req.params.sessionId;
   const params = sessionIdParamSchema.safeParse({ sessionId: raw });
   if (!params.success) {
@@ -193,14 +218,14 @@ router.post("/sessions/:sessionId/exit", async (req, res): Promise<void> => {
     return;
   }
 
-  const session = parkingSessions.find((item) => item.sessionId === params.data.sessionId);
+  const session = findSessionById(params.data.sessionId);
 
   if (!session) {
     res.status(404).json({ error: "Session not found" });
     return;
   }
 
-  const slot = parkingSlots.find((item) => item.slotId === session.slotId);
+  const slot = getSlotById(session.slotId);
 
   const pricePerHour = slot?.pricePerHour ?? 0;
   const startTime = session.parkingStartTime ? new Date(session.parkingStartTime) : null;
@@ -208,19 +233,22 @@ router.post("/sessions/:sessionId/exit", async (req, res): Promise<void> => {
 
   const now = new Date();
 
-  // Free up the slot
   if (slot) {
-    slot.available = true;
+    setSlotAvailable(session.slotId, true);
   }
 
-  session.exitTime = now.toISOString();
-  session.estimatedFee = finalFee;
-  session.paymentStatus = "completed";
-  res.json(enrichSession(session));
+  const completed: ParkingSession = {
+    ...session,
+    exitTime: now.toISOString(),
+    estimatedFee: finalFee,
+    paymentStatus: "completed",
+  };
+  updateSessionFull(completed);
+  res.json(enrichSession(completed));
 });
 
 // GET /sessions/:sessionId
-router.get("/sessions/:sessionId", async (req, res): Promise<void> => {
+router.get("/sessions/:sessionId", requireAuth, requireRole("admin", "user"), async (req, res): Promise<void> => {
   const raw = Array.isArray(req.params.sessionId) ? req.params.sessionId[0] : req.params.sessionId;
   const params = sessionIdParamSchema.safeParse({ sessionId: raw });
   if (!params.success) {
@@ -228,7 +256,7 @@ router.get("/sessions/:sessionId", async (req, res): Promise<void> => {
     return;
   }
 
-  const session = parkingSessions.find((item) => item.sessionId === params.data.sessionId);
+  const session = findSessionById(params.data.sessionId);
 
   if (!session) {
     res.status(404).json({ error: "Session not found" });
@@ -239,14 +267,14 @@ router.get("/sessions/:sessionId", async (req, res): Promise<void> => {
 });
 
 // GET /my-car
-router.get("/my-car", async (req, res): Promise<void> => {
+router.get("/my-car", requireAuth, requireRole("admin", "user"), async (req, res): Promise<void> => {
   const query = getMyCarQuerySchema.safeParse(req.query);
   if (!query.success) {
     res.status(400).json({ error: query.error.message });
     return;
   }
 
-  let sessions = [...parkingSessions];
+  let sessions = [...getAllSessions()];
 
   if (query.data.userId) {
     sessions = sessions.filter((s) => s.userId === query.data.userId && s.paymentStatus !== "completed");

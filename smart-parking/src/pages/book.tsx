@@ -86,10 +86,12 @@ export function Book() {
   const [carNumber, setCarNumber] = useState("");
   const [needsEv, setNeedsEv] = useState(false);
   const [needsAccessible, setNeedsAccessible] = useState(false);
+  const [needsEasy, setNeedsEasy] = useState(false);
   const [parkingPreference, setParkingPreference] = useState<"free" | "paid" | "best">("best");
   const [preferredLevel, setPreferredLevel] = useState<string>("");
 
   const [recommendations, setRecommendations] = useState<ParkingSlot[]>([]);
+  const [recommendSummary, setRecommendSummary] = useState<string>("");
   const [searchDone, setSearchDone] = useState(false);
   const [activeBooking, setActiveBooking] = useState<ParkingSession | null>(null);
   const [selectedSlot, setSelectedSlot] = useState<ParkingSlot | null>(null);
@@ -105,25 +107,36 @@ export function Book() {
       data: {
         needsEv,
         needsAccessible,
+        needsEasy,
         parkingPreference,
         preferredLevel: (preferredLevel && preferredLevel !== "any") ? preferredLevel : undefined,
       }
     }, {
-      onSuccess: (res) => {
-        setRecommendations(res.slots ?? []);
+      onSuccess: (res: { found?: boolean; message?: string; slots?: ParkingSlot[] }) => {
+        setRecommendations(Array.isArray(res.slots) ? res.slots : []);
+        setRecommendSummary(typeof res.message === "string" ? res.message : "");
         setSearchDone(true);
         if (!res.found) {
-          toast({ title: "No slots available", description: res.message, variant: "destructive" });
+          toast({
+            title: "No matching slots",
+            description: res.message ?? "Adjust your filters and try again.",
+            variant: "destructive",
+          });
         }
       },
-      onError: () => toast({ title: "Error", description: "Could not fetch recommendations.", variant: "destructive" }),
+      onError: (e: unknown) =>
+        toast({
+          title: "Could not get recommendations",
+          description: e instanceof Error ? e.message : "Request failed.",
+          variant: "destructive",
+        }),
     });
   }
 
   function handleBook(slot: ParkingSlot) {
     setSelectedSlot(slot);
     bookMutation.mutate({
-      data: { userId: carNumber, carNumber, slotId: slot.slotId }
+      data: { carNumber, slotId: slot.slotId }
     }, {
       onSuccess: (session) => {
         setActiveBooking(session as unknown as ParkingSession);
@@ -131,7 +144,12 @@ export function Book() {
         queryClient.invalidateQueries({ queryKey: getGetSlotsQueryKey() });
         toast({ title: "Slot booked!", description: `Slot ${slot.slotId} reserved. Press Start Parking when you arrive.` });
       },
-      onError: () => toast({ title: "Booking failed", description: "Slot may already be taken.", variant: "destructive" }),
+      onError: (e: unknown) =>
+        toast({
+          title: "Booking failed",
+          description: e instanceof Error ? e.message : "Slot may already be taken.",
+          variant: "destructive",
+        }),
     });
   }
 
@@ -309,7 +327,10 @@ export function Book() {
       <Card className="border-slate-200 shadow-sm max-w-2xl">
         <CardHeader>
           <CardTitle>Find a Parking Slot</CardTitle>
-          <CardDescription>Enter your details and preferences to get top recommendations</CardDescription>
+          <CardDescription>
+            Enter your details and preferences. We return up to <strong>5</strong> best-matching slots (never padded with
+            unrelated levels).
+          </CardDescription>
         </CardHeader>
         <CardContent className="space-y-6">
           <div className="max-w-sm space-y-2">
@@ -355,22 +376,32 @@ export function Book() {
             </div>
           </div>
 
-          <div className="flex gap-4">
-            <label className="flex items-center gap-3 border rounded-xl p-4 flex-1 cursor-pointer hover:bg-slate-50 transition-colors">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            <label className="flex items-center gap-3 border rounded-xl p-4 cursor-pointer hover:bg-slate-50 transition-colors">
               <Checkbox checked={needsEv} onCheckedChange={(v) => setNeedsEv(!!v)} />
               <div className="flex items-center gap-2">
                 <BatteryCharging className="h-4 w-4 text-blue-600" />
                 <span className="text-sm font-medium">EV Charging</span>
               </div>
             </label>
-            <label className="flex items-center gap-3 border rounded-xl p-4 flex-1 cursor-pointer hover:bg-slate-50 transition-colors">
+            <label className="flex items-center gap-3 border rounded-xl p-4 cursor-pointer hover:bg-slate-50 transition-colors">
               <Checkbox checked={needsAccessible} onCheckedChange={(v) => setNeedsAccessible(!!v)} />
               <div className="flex items-center gap-2">
                 <Accessibility className="h-4 w-4 text-sky-600" />
                 <span className="text-sm font-medium">Accessible</span>
               </div>
             </label>
+            <label className="flex items-center gap-3 border rounded-xl p-4 cursor-pointer hover:bg-slate-50 transition-colors">
+              <Checkbox checked={needsEasy} onCheckedChange={(v) => setNeedsEasy(!!v)} />
+              <div className="flex items-center gap-2">
+                <MapPin className="h-4 w-4 text-emerald-600" />
+                <span className="text-sm font-medium">Easy</span>
+              </div>
+            </label>
           </div>
+          <p className="text-xs text-slate-500 -mt-2">
+            Easy = near lift / quick to reach. Combine with Accessible for bays that are both accessible and easy access.
+          </p>
 
           <Button
             size="lg"
@@ -378,7 +409,7 @@ export function Book() {
             onClick={handleSearch}
             disabled={recommendMutation.isPending}
           >
-            {recommendMutation.isPending ? "Searching..." : "Find Best Slots"}
+            {recommendMutation.isPending ? "Searching..." : "Find top 5 slots"}
           </Button>
         </CardContent>
       </Card>
@@ -386,18 +417,25 @@ export function Book() {
       {/* Recommendations */}
       {searchDone && (
         <div className="space-y-4">
-          <div className="flex items-center gap-2">
-            <Star className="h-5 w-5 text-amber-500" />
-            <h3 className="text-lg font-semibold text-slate-900">
-              {recommendations.length > 0
-                ? `Top ${recommendations.length} Recommendations`
-                : "No Slots Available"}
-            </h3>
+          <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:gap-2">
+            <div className="flex items-center gap-2">
+              <Star className="h-5 w-5 text-amber-500" />
+              <h3 className="text-lg font-semibold text-slate-900">
+                {recommendations.length > 0 ? "Top 5 recommendations" : "No slots match"}
+              </h3>
+            </div>
+            {recommendSummary ? (
+              <p className="text-sm text-slate-600 sm:ml-1">{recommendSummary}</p>
+            ) : null}
           </div>
 
           {recommendations.length === 0 ? (
-            <Card className="border-dashed text-center py-12">
-              <p className="text-slate-500">No available slots match your criteria. Try changing your preferences.</p>
+            <Card className="border-dashed border-amber-200 bg-amber-50/40 text-center py-10 px-4">
+              <p className="text-slate-800 font-medium">No available slots for this search</p>
+              <p className="text-slate-600 text-sm mt-2">
+                {recommendSummary ||
+                  "Try another level, switch between free and premium, or uncheck EV, Accessible, or Easy if you do not need them."}
+              </p>
             </Card>
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">

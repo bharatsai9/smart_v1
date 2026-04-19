@@ -12,12 +12,15 @@ export const getSlotsQuerySchema = z.object({
 export const recommendSlotsBodySchema = z.object({
   needsEv: z.boolean().optional().default(false),
   needsAccessible: z.boolean().optional().default(false),
+  /** Prefer bays near lift / easy to reach (maps to `nearLift` on slots). */
+  needsEasy: z.boolean().optional().default(false),
   parkingPreference: z.enum(["free", "paid", "best"]).optional().default("best"),
   preferredLevel: z.enum(["B1", "B2", "GF", "L1", "L2", "any"]).optional(),
 });
 
 export const bookSlotBodySchema = z.object({
-  userId: z.string().min(1),
+  /** Ignored when authenticated — server uses JWT subject as user id. */
+  userId: z.string().optional(),
   carNumber: z.string().min(1),
   slotId: z.string().min(1),
 });

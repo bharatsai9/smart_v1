@@ -1,11 +1,12 @@
 import { Router, type IRouter } from "express";
-import { parkingSessions, parkingSlots } from "../lib/store";
+import { getAllSessions, getAllSlots } from "../lib/store";
+import { requireAdmin } from "../middleware/auth";
 
 const router: IRouter = Router();
 
-router.get("/dashboard", async (req, res): Promise<void> => {
-  const slots = parkingSlots;
-  const sessions = parkingSessions;
+router.get("/dashboard", ...requireAdmin, async (req, res): Promise<void> => {
+  const slots = getAllSlots();
+  const sessions = getAllSessions();
 
   const totalSlots = slots.length;
   const availableSlots = slots.filter((s) => s.available).length;

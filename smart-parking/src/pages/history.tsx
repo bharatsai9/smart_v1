@@ -1,5 +1,6 @@
 import { useGetSessions, getGetSessionsQueryKey } from "@/lib/api-client";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { useAuth } from "@/lib/auth-context";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { History } from "lucide-react";
 
@@ -31,13 +32,29 @@ function StatusBadge({ status }: { status: string }) {
 }
 
 export function HistoryPage() {
+  const { user } = useAuth();
+  const isAdmin = user?.role === "admin";
+
   const { data: sessions, isLoading } = useGetSessions(
     {},
-    { query: { queryKey: getGetSessionsQueryKey({}) } }
+    { query: { queryKey: getGetSessionsQueryKey({}) } },
   );
 
   return (
     <div className="space-y-4">
+      <Card className="border-slate-200 bg-slate-50/80">
+        <CardHeader className="pb-2">
+          <CardTitle className="text-base">
+            {isAdmin ? "Fleet bookings" : "My bookings"}
+          </CardTitle>
+          <CardDescription>
+            {isAdmin
+              ? "All sessions across users. Drivers only see their own list."
+              : `Showing reservations for account ${user?.username ?? ""} only.`}
+          </CardDescription>
+        </CardHeader>
+      </Card>
+
       {isLoading ? (
         <div className="space-y-2">
           {Array.from({ length: 5 }).map((_, i) => (
@@ -61,6 +78,7 @@ export function HistoryPage() {
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-t border-slate-100 bg-slate-50 text-xs text-slate-500 uppercase tracking-wide">
+                  {isAdmin && <th className="px-4 py-3 text-left">User</th>}
                   <th className="px-4 py-3 text-left">Car</th>
                   <th className="px-4 py-3 text-left">Slot</th>
                   <th className="px-4 py-3 text-left">Level</th>
@@ -77,6 +95,9 @@ export function HistoryPage() {
                     key={session.sessionId}
                     className={`border-t border-slate-100 hover:bg-slate-50 transition-colors ${i % 2 === 0 ? "" : "bg-slate-50/50"}`}
                   >
+                    {isAdmin && (
+                      <td className="px-4 py-3 font-mono text-slate-600 text-xs">{session.userId}</td>
+                    )}
                     <td className="px-4 py-3 font-mono font-medium text-slate-900">{session.carNumber}</td>
                     <td className="px-4 py-3 font-mono text-slate-700">{session.slotId}</td>
                     <td className="px-4 py-3 text-slate-600">{session.slot?.level ?? "—"}</td>
